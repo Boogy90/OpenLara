@@ -402,7 +402,7 @@ struct Level : IGame {
         Stream::cacheWrite("settings", (char*)&settings, sizeof(settings));
 
         if (rebuildShaders) {
-        #if !defined(_GAPI_D3D8) && !defined(_GAPI_D3D9) && !defined(_GAPI_D3D11) && !defined(_GAPI_GXM)
+        #if !defined(_GAPI_D3D8) && !defined(_GAPI_D3D9) && !defined(_GAPI_D3D11) && !defined(_GAPI_D3D12) && !defined(_GAPI_GXM)
             delete shaderCache;
             shaderCache = new ShaderCache();
         #endif
@@ -1853,7 +1853,7 @@ struct Level : IGame {
     }
 
     void renderSky() {
-        #if !defined(_GAPI_GL) && !defined(_GAPI_D3D11)
+        #if !defined(_GAPI_GL) && !defined(_GAPI_D3D11) && !defined(_GAPI_D3D12)
             return;
         #endif
         ASSERT(mesh->transparent == 0);
@@ -2784,7 +2784,7 @@ struct Level : IGame {
             );
         }
 
-    #if defined(_GAPI_D3D8) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_GXM)
+    #if defined(_GAPI_D3D8) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_D3D12) || defined(_GAPI_GXM)
         bias.e11 = -bias.e11; // vertical flip for UVs
     #endif
 
@@ -2938,7 +2938,7 @@ struct Level : IGame {
         if (colorShadow)
             Core::setClearColor(vec4(0.0f));
 
-        #ifdef _GAPI_D3D11 // TODO render pass
+        #if _GAPI_D3D11 || _GAPI_D3D12// TODO render pass
             Core::setTarget(NULL, NULL, RT_CLEAR_DEPTH | RT_CLEAR_COLOR | RT_STORE_COLOR | RT_STORE_DEPTH);
             Core::validateRenderState();
         #endif

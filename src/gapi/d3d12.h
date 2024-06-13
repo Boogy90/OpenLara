@@ -3,6 +3,7 @@
 
 #include "core.h"
 #include <d3d12.h>
+#include <dxgi1_6.h>
 
 #define PROFILE_MARKER(title)
 #define PROFILE_LABEL(id, child, label)
@@ -12,6 +13,9 @@ namespace GAPI {
 	using namespace Core;
 
 	typedef ::Vertex Vertex;
+
+	ID3D12CommandQueue* commandQueue = nullptr;
+	UINT frameIndex = 0;
 
 	// Shader
 #include "shaders/d3d11/shaders.h"
@@ -38,9 +42,15 @@ namespace GAPI {
 		}
 
 		void bind(int sampler) {
+			if (Core::active.textures[sampler] != this) {
+				Core::active.textures[sampler] = this;
+			}
 		}
 
 		void unbind(int sampler) {
+			if (Core::active.textures[sampler]) {
+				Core::active.textures[sampler] = NULL;
+			}
 		}
 
 		void setFilterQuality(int value) {}
@@ -55,6 +65,10 @@ namespace GAPI {
 		}
 
 		void bind() {
+			if (Core::active.shader != this) {
+				Core::active.shader = this;
+				
+			}
 		}
 
 		void validate() {
@@ -99,6 +113,23 @@ namespace GAPI {
 
 	// Functions
 	void init() {
+		support.maxAniso = 8;
+		support.maxVectors = 16;
+		support.shaderBinary = true;
+		support.VAO = false; // SHADOW_COLOR
+		support.depthTexture = true;
+		support.shadowSampler = true;
+		support.discardFrame = false;
+		support.texNPOT = true;
+		support.texRG = true;
+		support.texBorder = true;
+		support.colorFloat = true;
+		support.colorHalf = true;
+		support.texFloatLinear = true;
+		support.texFloat = true;
+		support.texHalfLinear = true;
+		support.texHalf = true;
+		support.tex3D = true;
 	}
 
 	void deinit() {

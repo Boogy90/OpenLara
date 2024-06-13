@@ -597,8 +597,83 @@ HWND hWnd;
         HRESULT ret = osSwapChain->Present(Core::settings.detail.vsync ? 1 : 0, 0);
     }
 #elif _GAPI_D3D12
-void ContextCreate() {
 
+ID3D12Device* osDevice = nullptr;
+IDXGISwapChain3* osSwapChain = nullptr;
+
+void ContextCreate() {
+    UINT dxgiFactoryFlags = 0;
+#if _DEBUG
+    {
+        ID3D12Debug* debugLayer = nullptr;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugLayer))))
+        {
+            debugLayer->EnableDebugLayer();
+            debugLayer->Release();
+            dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+        }
+    }
+#endif
+
+    IDXGIFactory6* dxgiFactory = nullptr;
+    CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&dxgiFactory));
+    
+    IDXGIAdapter1* dxgiAdapter = nullptr;
+    for (
+        UINT adapterIndex = 0;
+        SUCCEEDED(dxgiFactory->EnumAdapterByGpuPreference(
+            adapterIndex,
+            DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+            IID_PPV_ARGS(&dxgiAdapter)));
+        ++adapterIndex)
+    {
+        DXGI_ADAPTER_DESC1 desc;
+        dxgiAdapter->GetDesc1(&desc);
+
+        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+        {
+            // Don't select the Basic Render Driver adapter.
+            // If you want a software adapter, pass in "/warp" on the command line.
+            continue;
+        }
+
+        // Check to see whether the adapter supports Direct3D 12, but don't create the
+        // actual device yet.
+        if (SUCCEEDED(D3D12CreateDevice(dxgiAdapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)))
+        {
+            break;
+        }
+
+        dxgiAdapter->Release();
+    }
+
+    D3D12CreateDevice(dxgiAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&osDevice));
+
+    D3D12_COMMAND_QUEUE_DESC queueDesc = { };
+    queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    osDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&GAPI::commandQueue));
+
+    RECT r = { 0, 0, 1280, 720 };
+    GetWindowRect(hWnd, &r);
+
+    DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+    swapChainDesc.BufferCount = 2;
+    swapChainDesc.Width = r.right - r.left;
+    swapChainDesc.Height = r.bottom - r.top;
+    swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    swapChainDesc.SampleDesc.Count = 1;
+
+    IDXGISwapChain1* swapChain = nullptr;
+    dxgiFactory->CreateSwapChainForHwnd(GAPI::commandQueue, hWnd, &swapChainDesc, nullptr, nullptr, &swapChain);
+    swapChain->QueryInterface(&osSwapChain);
+
+    GAPI::frameIndex = osSwapChain->GetCurrentBackBufferIndex();
+
+    dxgiFactory->Release();
+    dxgiFactory = nullptr;
 }
 
 void ContextDelete() {
@@ -610,6 +685,7 @@ void ContextResize() {
 }
 
 void ContextSwap() {
+    osSwapChain->Present(Core::settings.detail.vsync ? 1 : 0, 0);
 }
 #endif
 
