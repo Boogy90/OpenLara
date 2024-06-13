@@ -37,7 +37,8 @@
     #define _OS_WIN      1
     //#define _GAPI_GL     1
     //#define _GAPI_D3D9   1
-    #define _GAPI_D3D11  1
+    //#define _GAPI_D3D11  1
+    #define _GAPI_D3D12  1
     //#define _GAPI_VULKAN 1
     //#define _GAPI_SW     1
 
@@ -799,6 +800,8 @@ namespace Core {
     #include "gapi/d3d9.h"
 #elif _GAPI_D3D11
     #include "gapi/d3d11.h"
+#elif _GAPI_D3D12
+    #include "gapi/d3d12.h"
 #elif _OS_3DS
     #include "gapi/c3d.h"
 #elif _GAPI_GU

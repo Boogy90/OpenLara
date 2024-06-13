@@ -8,11 +8,11 @@
 
 #define NO_WATER_HEIGHT  1000000.0f
 
-#if defined(_OS_IOS) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_GXM)
+#if defined(_OS_IOS) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_D3D12) || defined(_GAPI_GXM)
     #define USE_SCREEN_TEX
 #endif
 
-#if defined(_GAPI_D3D8) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11)
+#if defined(_GAPI_D3D8) || defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_D3D12)
     #define EARLY_CLEAR
 #endif
 
@@ -835,7 +835,7 @@ struct WaterCache {
             Core::setTarget(refract, NULL, RT_LOAD_DEPTH | RT_STORE_COLOR | RT_STORE_DEPTH);
             Core::validateRenderState();
             bool flip = false;
-            #if defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_GXM)
+            #if defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_D3D12) || defined(_GAPI_GXM)
                 flip = true;
             #endif
             blitTexture(screen, flip);
@@ -1003,7 +1003,7 @@ struct WaterCache {
         vertices[2].light =
         vertices[3].light = ubyte4(255, 255, 255, 255);
 
-    #if defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_GXM)
+    #if defined(_GAPI_D3D9) || defined(_GAPI_D3D11) || defined(_GAPI_D3D12) || defined(_GAPI_GXM)
         flip = !flip;
     #endif
 

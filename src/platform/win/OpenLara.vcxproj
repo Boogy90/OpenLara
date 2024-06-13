@@ -128,6 +128,7 @@
     <ClInclude Include="..\..\gameflow.h" />
     <ClInclude Include="..\..\gapi\c3d.h" />
     <ClInclude Include="..\..\gapi\d3d11.h" />
+    <ClInclude Include="..\..\gapi\d3d12.h" />
     <ClInclude Include="..\..\gapi\d3d8.h" />
     <ClInclude Include="..\..\gapi\d3d9.h" />
     <ClInclude Include="..\..\gapi\gl.h" />

@@ -596,6 +596,21 @@ HWND hWnd;
     void ContextSwap() {
         HRESULT ret = osSwapChain->Present(Core::settings.detail.vsync ? 1 : 0, 0);
     }
+#elif _GAPI_D3D12
+void ContextCreate() {
+
+}
+
+void ContextDelete() {
+    GAPI::deinit();
+}
+
+void ContextResize() {
+
+}
+
+void ContextSwap() {
+}
 #endif
 
 #ifdef _NAPI_SOCKET
