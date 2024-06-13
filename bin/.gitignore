@@ -6,4 +6,7 @@
 *.RAW
 *.zip
 *.txt
-
+*.exe
+*.exp
+*.lib
+*.pdb

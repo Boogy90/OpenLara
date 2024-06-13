@@ -35,9 +35,9 @@
     #undef OS_PTHREAD_MT
 #elif WIN32
     #define _OS_WIN      1
-    #define _GAPI_GL     1
+    //#define _GAPI_GL     1
     //#define _GAPI_D3D9   1
-    //#define _GAPI_D3D11  1
+    #define _GAPI_D3D11  1
     //#define _GAPI_VULKAN 1
     //#define _GAPI_SW     1
 
