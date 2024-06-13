@@ -163,6 +163,7 @@
     <None Include="..\..\shaders\compose.glsl">
       <Filter>shaders</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="shaders">

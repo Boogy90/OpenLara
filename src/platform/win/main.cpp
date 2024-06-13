@@ -670,10 +670,11 @@ void ContextCreate() {
     dxgiFactory->CreateSwapChainForHwnd(GAPI::commandQueue, hWnd, &swapChainDesc, nullptr, nullptr, &swapChain);
     swapChain->QueryInterface(&osSwapChain);
 
-    GAPI::frameIndex = osSwapChain->GetCurrentBackBufferIndex();
-
     dxgiFactory->Release();
     dxgiFactory = nullptr;
+
+    Core::width = swapChainDesc.Width;
+    Core::height = swapChainDesc.Height;
 }
 
 void ContextDelete() {
@@ -686,6 +687,7 @@ void ContextResize() {
 
 void ContextSwap() {
     osSwapChain->Present(Core::settings.detail.vsync ? 1 : 0, 0);
+    GAPI::signalFrameComplete();
 }
 #endif
 

@@ -5,16 +5,41 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 
-#define PROFILE_MARKER(title)
+#define USE_PIX
+#include <pix.h>
+
+struct Marker
+{
+	Marker(const char* title, ID3D12GraphicsCommandList* cl)
+		:commandlist(cl){
+		PIXBeginEvent(cl, 0, title);
+	}
+
+	~Marker() {
+		PIXEndEvent(commandlist);
+	}
+	ID3D12GraphicsCommandList* commandlist = nullptr;
+};
+
+#define PROFILE_MARKER(title) Marker marker(title, GAPI::commandList)
 #define PROFILE_LABEL(id, child, label)
 #define PROFILE_TIMING(time)
+
+extern ID3D12Device* osDevice;
+extern IDXGISwapChain3* osSwapChain;
 
 namespace GAPI {
 	using namespace Core;
 
 	typedef ::Vertex Vertex;
 
+	ID3D12Resource* depthBuffer = nullptr;
+
+	ID3D12CommandAllocator* commandAllocator[2] = { nullptr, nullptr };
+	ID3D12GraphicsCommandList* commandList = nullptr;
 	ID3D12CommandQueue* commandQueue = nullptr;
+	ID3D12Fence* fence = nullptr;
+	UINT64 fenceValue = 2;
 	UINT frameIndex = 0;
 
 	// Shader
@@ -130,16 +155,68 @@ namespace GAPI {
 		support.texHalfLinear = true;
 		support.texHalf = true;
 		support.tex3D = true;
+
+		frameIndex = osSwapChain->GetCurrentBackBufferIndex();
+
+		osDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator[0]));
+		osDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator[1]));
+		osDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator[0], nullptr, IID_PPV_ARGS(&commandList));
+		commandList->Close();
+
+		osDevice->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+		fenceValue++;
+
+		D3D12_HEAP_PROPERTIES heap = {};
+		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+		D3D12_RESOURCE_DESC desc = { };
+		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		desc.Width = Core::width;
+		desc.Height = Core::height;
+		desc.MipLevels = 1;
+		desc.DepthOrArraySize = 1;
+		desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+		desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		desc.SampleDesc.Count = 1;
+		osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, nullptr, IID_PPV_ARGS(&depthBuffer));
 	}
 
 	void deinit() {
+		if (depthBuffer)
+			depthBuffer->Release();
 	}
 
 	bool beginFrame() {
+		UINT64 gpuWait = fenceValue - 2;
+		if (fence->GetCompletedValue() < gpuWait)
+		{
+			HANDLE eventHandle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+			fence->SetEventOnCompletion(gpuWait, eventHandle);
+			WaitForSingleObject(eventHandle, INFINITE);
+			CloseHandle(eventHandle);
+		}
+
+		commandAllocator[frameIndex]->Reset();
+		commandList->Reset(commandAllocator[frameIndex], nullptr);
+
 		return true;
 	}
 
 	void endFrame() {
+
+		commandList->Close();
+
+		ID3D12CommandList* commandLists[] = { commandList };
+		commandQueue->ExecuteCommandLists(1, commandLists);
+	}
+
+	void signalFrameComplete()
+	{
+		frameIndex = osSwapChain->GetCurrentBackBufferIndex();
+
+		commandQueue->Signal(fence, fenceValue);
+		fenceValue++;
 	}
 
 	void setVSync(bool enable) {}
@@ -157,6 +234,7 @@ namespace GAPI {
 	}
 
 	void clear(bool color, bool depth) {
+		
 	}
 
 	void copyTarget(Texture* dst, int xOffset, int yOffset, int x, int y, int width, int height) {
