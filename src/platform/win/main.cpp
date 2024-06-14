@@ -605,11 +605,13 @@ void ContextCreate() {
     UINT dxgiFactoryFlags = 0;
 #if _DEBUG
     {
-        ID3D12Debug* debugLayer = nullptr;
+        ID3D12Debug1* debugLayer = nullptr;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugLayer))))
         {
             debugLayer->EnableDebugLayer();
-            debugLayer->Release();
+			debugLayer->SetEnableGPUBasedValidation(true);
+			debugLayer->Release();
+
             dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
         }
     }
@@ -648,6 +650,19 @@ void ContextCreate() {
     }
 
     D3D12CreateDevice(dxgiAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&osDevice));
+
+#if _DEBUG
+	ID3D12InfoQueue* infoQueue = nullptr;
+	if (SUCCEEDED(osDevice->QueryInterface(&infoQueue)))
+	{
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_INFO, TRUE);
+		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_MESSAGE, TRUE);
+		infoQueue->Release();
+	}
+#endif
 
     D3D12_COMMAND_QUEUE_DESC queueDesc = { };
     queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;

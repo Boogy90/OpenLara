@@ -12,16 +12,18 @@ struct Marker
 {
 	Marker(const char* title, ID3D12GraphicsCommandList* cl)
 		:commandlist(cl){
-		PIXBeginEvent(cl, 0, title);
+		if(cl)
+			PIXBeginEvent(cl, 0, title);
 	}
 
 	~Marker() {
-		PIXEndEvent(commandlist);
+		if(commandlist)
+			PIXEndEvent(commandlist);
 	}
 	ID3D12GraphicsCommandList* commandlist = nullptr;
 };
 
-#define PROFILE_MARKER(title) Marker marker(title, GAPI::commandList)
+#define PROFILE_MARKER(title) Marker marker(title, GAPI::inFrame ? GAPI::commandList : nullptr)
 #define PROFILE_LABEL(id, child, label)
 #define PROFILE_TIMING(time)
 
@@ -39,6 +41,7 @@ namespace GAPI {
 	ID3D12GraphicsCommandList* commandList = nullptr;
 	ID3D12CommandQueue* commandQueue = nullptr;
 	ID3D12Fence* fence = nullptr;
+	bool inFrame = false;
 	UINT64 fenceValue = 2;
 	UINT frameIndex = 0;
 
@@ -199,12 +202,14 @@ namespace GAPI {
 
 		commandAllocator[frameIndex]->Reset();
 		commandList->Reset(commandAllocator[frameIndex], nullptr);
+		inFrame = true;
 
 		return true;
 	}
 
 	void endFrame() {
 
+		inFrame = false;
 		commandList->Close();
 
 		ID3D12CommandList* commandLists[] = { commandList };
