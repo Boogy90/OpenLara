@@ -41,6 +41,8 @@ namespace GAPI {
 	ID3D12GraphicsCommandList* commandList = nullptr;
 	ID3D12CommandQueue* commandQueue = nullptr;
 	ID3D12Fence* fence = nullptr;
+	ID3D12DescriptorHeap* rtvHeap = nullptr;
+	ID3D12DescriptorHeap* dsvHeap = nullptr;
 	bool inFrame = false;
 	UINT64 fenceValue = 2;
 	UINT frameIndex = 0;
@@ -169,6 +171,16 @@ namespace GAPI {
 		osDevice->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
 		fenceValue++;
 
+		D3D12_DESCRIPTOR_HEAP_DESC descHeap = {};
+		descHeap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		descHeap.NumDescriptors = 2;
+		descHeap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		osDevice->CreateDescriptorHeap(&descHeap, IID_PPV_ARGS(&rtvHeap));
+
+		descHeap.NumDescriptors = 1;
+		descHeap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+		osDevice->CreateDescriptorHeap(&descHeap, IID_PPV_ARGS(&dsvHeap));
+
 		D3D12_HEAP_PROPERTIES heap = {};
 		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -182,7 +194,12 @@ namespace GAPI {
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 		desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 		desc.SampleDesc.Count = 1;
-		osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, nullptr, IID_PPV_ARGS(&depthBuffer));
+		D3D12_CLEAR_VALUE clearValue = { };
+		clearValue.Format = desc.Format;
+		clearValue.DepthStencil.Depth = 1.f;
+		osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clearValue, IID_PPV_ARGS(&depthBuffer));
+
+		osDevice->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
 	}
 
 	void deinit() {
@@ -239,7 +256,10 @@ namespace GAPI {
 	}
 
 	void clear(bool color, bool depth) {
-		
+		if (depth)
+		{
+			commandList->ClearDepthStencilView(dsvHeap->GetCPUDescriptorHandleForHeapStart(), D3D12_CLEAR_FLAG_DEPTH, 1.f, 0, 0, nullptr);
+		}
 	}
 
 	void copyTarget(Texture* dst, int xOffset, int yOffset, int x, int y, int width, int height) {
