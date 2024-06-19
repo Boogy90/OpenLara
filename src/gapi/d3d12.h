@@ -35,7 +35,10 @@ namespace GAPI {
 
 	typedef ::Vertex Vertex;
 
+	vec4 clearColor;
+
 	ID3D12Resource* depthBuffer = nullptr;
+	ID3D12Resource* backbuffers[2] = { nullptr, nullptr };
 
 	ID3D12CommandAllocator* commandAllocator[2] = { nullptr, nullptr };
 	ID3D12GraphicsCommandList* commandList = nullptr;
@@ -43,6 +46,7 @@ namespace GAPI {
 	ID3D12Fence* fence = nullptr;
 	ID3D12DescriptorHeap* rtvHeap = nullptr;
 	ID3D12DescriptorHeap* dsvHeap = nullptr;
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle[2] = {};
 	bool inFrame = false;
 	UINT64 fenceValue = 2;
 	UINT frameIndex = 0;
@@ -54,26 +58,138 @@ namespace GAPI {
 		int       width, height, depth, origWidth, origHeight, origDepth;
 		TexFormat fmt;
 		uint32    opt;
+		bool dirty = false;
+
+		ID3D12Resource* resource = nullptr;
+		ID3D12Resource* stagingResource = nullptr;
+		D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_GENERIC_READ;
+
+		const struct FormatDesc {
+			int         bpp;
+			DXGI_FORMAT format;
+		} formats[FMT_MAX] = {
+			{   8, DXGI_FORMAT_R8_UNORM       },
+			{  32, DXGI_FORMAT_R8G8B8A8_UNORM },
+			{  16, DXGI_FORMAT_B5G6R5_UNORM   },
+			{  16, DXGI_FORMAT_B5G5R5A1_UNORM },
+			{  64, DXGI_FORMAT_R32G32_FLOAT   },
+			{  32, DXGI_FORMAT_R16G16_FLOAT   },
+			{  16, DXGI_FORMAT_R16_TYPELESS   },
+			{  16, DXGI_FORMAT_R16_TYPELESS   },
+		};
 
 		Texture(int width, int height, int depth, uint32 opt) : width(width), height(height), depth(depth), origWidth(width), origHeight(height), origDepth(depth), fmt(FMT_RGBA), opt(opt) {
 
 		}
 
 		void init(void* data) {
+			bool mipmaps = (opt & OPT_MIPMAPS) != 0;
+			bool isDepth = fmt == FMT_DEPTH || fmt == FMT_SHADOW;
+			bool isCube = (opt & OPT_CUBEMAP) != 0;
+			bool isVolume = (opt & OPT_VOLUME) != 0;
+			bool isTarget = (opt & OPT_TARGET) != 0;
+			bool isDynamic = (opt & OPT_DYNAMIC) != 0;
+
+			D3D12_RESOURCE_DESC desc = {};
+			desc.Width = width;
+			desc.Height = height;
+			desc.MipLevels = mipmaps ? 0 : 1;
+			desc.Format = formats[fmt].format;
+			desc.Alignment = 0;
+			desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+			desc.SampleDesc.Count = 1;
+			desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+			if (isVolume)
+			{
+				desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+				desc.DepthOrArraySize = origDepth;
+			}
+			else if (isCube)
+				desc.DepthOrArraySize = 6;
+			else
+				desc.DepthOrArraySize = 1;
+
+			if (isTarget && isDepth)
+				desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+			else if (isTarget)
+				desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+			D3D12_HEAP_PROPERTIES heap = {};
+			heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+			osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&resource));
+
+			if (isDynamic)
+			{
+				UINT64 size = 0;
+				osDevice->GetCopyableFootprints(&desc, 0, 1, 0, nullptr, nullptr, nullptr, &size);
+
+				D3D12_RESOURCE_DESC stagingDesc = { };
+				stagingDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				stagingDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				stagingDesc.Width = size;
+				stagingDesc.Height = 1;
+				stagingDesc.DepthOrArraySize = 1;
+				stagingDesc.MipLevels = 1;
+				stagingDesc.SampleDesc.Count = 1;
+				
+				heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+				osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &stagingDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&stagingResource));
+			}
 		}
 
 		void deinit() {
+			if (resource)
+				resource->Release();
+			resource = nullptr;
 		}
 
 		void generateMipMap() {
 		}
 
 		void update(void* data) {
+			ASSERT(stagingResource != nullptr);
+
+			D3D12_RANGE range = { 0, 0 };
+			void* gpuData = nullptr;
+			stagingResource->Map(0, &range, &gpuData);
+			memcpy(gpuData, data, width * height * (formats[fmt].bpp / 8));
+			range.End = width * height * (formats[fmt].bpp / 8);
+			stagingResource->Unmap(0, &range);
+			dirty = true;
 		}
 
 		void bind(int sampler) {
 			if (Core::active.textures[sampler] != this) {
 				Core::active.textures[sampler] = this;
+			}
+
+			if (dirty)
+			{
+				D3D12_TEXTURE_COPY_LOCATION dst = { };
+				dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+				dst.SubresourceIndex = 0;
+				dst.pResource = resource;
+
+				D3D12_TEXTURE_COPY_LOCATION src = { };
+				src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+				src.pResource = stagingResource;
+				src.PlacedFootprint.Offset = 0;
+				osDevice->GetCopyableFootprints(&resource->GetDesc(), 0, 1, 0, &src.PlacedFootprint, nullptr, nullptr, nullptr);
+
+				D3D12_RESOURCE_BARRIER barrier = { };
+				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource = resource;
+				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateBefore = state;
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+
+				commandList->ResourceBarrier(1, &barrier);
+				commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+				
+				barrier.Transition.StateAfter = state;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				commandList->ResourceBarrier(1, &barrier);
 			}
 		}
 
@@ -181,6 +297,15 @@ namespace GAPI {
 		descHeap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 		osDevice->CreateDescriptorHeap(&descHeap, IID_PPV_ARGS(&dsvHeap));
 
+		
+		osSwapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffers[0]));
+		osSwapChain->GetBuffer(1, IID_PPV_ARGS(&backbuffers[1]));
+		rtvHandle[0] = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+		rtvHandle[1] = { rtvHandle[0].ptr + osDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) };
+
+		osDevice->CreateRenderTargetView(backbuffers[0], nullptr, rtvHandle[0]);
+		osDevice->CreateRenderTargetView(backbuffers[1], nullptr, rtvHandle[1]);
+
 		D3D12_HEAP_PROPERTIES heap = {};
 		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -205,6 +330,7 @@ namespace GAPI {
 	void deinit() {
 		if (depthBuffer)
 			depthBuffer->Release();
+		depthBuffer = nullptr;
 	}
 
 	bool beginFrame() {
@@ -221,10 +347,28 @@ namespace GAPI {
 		commandList->Reset(commandAllocator[frameIndex], nullptr);
 		inFrame = true;
 
+		D3D12_RESOURCE_BARRIER barrier = { };
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = backbuffers[frameIndex];
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		commandList->ResourceBarrier(1, &barrier);
+
+		commandList->OMSetRenderTargets(1, rtvHandle + frameIndex, TRUE, &(dsvHeap->GetCPUDescriptorHandleForHeapStart()));
+
 		return true;
 	}
 
 	void endFrame() {
+
+		D3D12_RESOURCE_BARRIER barrier = { };
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = backbuffers[frameIndex];
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		commandList->ResourceBarrier(1, &barrier);
 
 		inFrame = false;
 		commandList->Close();
@@ -253,9 +397,15 @@ namespace GAPI {
 	}
 
 	void setClearColor(const vec4& color) {
+		clearColor = color;
 	}
 
 	void clear(bool color, bool depth) {
+		if (color)
+		{
+			commandList->ClearRenderTargetView(rtvHandle[frameIndex], (FLOAT*)&clearColor, 0, nullptr);
+		}
+		
 		if (depth)
 		{
 			commandList->ClearDepthStencilView(dsvHeap->GetCPUDescriptorHandleForHeapStart(), D3D12_CLEAR_FLAG_DEPTH, 1.f, 0, 0, nullptr);
