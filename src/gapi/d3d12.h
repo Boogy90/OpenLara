@@ -46,6 +46,8 @@ namespace GAPI {
 	ID3D12Fence* fence = nullptr;
 	ID3D12DescriptorHeap* rtvHeap = nullptr;
 	ID3D12DescriptorHeap* dsvHeap = nullptr;
+	ID3D12RootSignature* rootSignature = nullptr;
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline = {};
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle[2] = {};
 	bool inFrame = false;
 	UINT64 fenceValue = 2;
@@ -190,6 +192,8 @@ namespace GAPI {
 				barrier.Transition.StateAfter = state;
 				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 				commandList->ResourceBarrier(1, &barrier);
+
+				dirty = false;
 			}
 		}
 
@@ -202,12 +206,143 @@ namespace GAPI {
 		void setFilterQuality(int value) {}
 	};
 
+	static const struct Binding {
+		int reg;
+	} bindings[uMAX] = {
+		{   0 }, // uParam
+		{   1 }, // uTexParam
+		{   2 }, // uViewProj
+		{   6 }, // uBasis
+		{  70 }, // uLightProj
+		{  74 }, // uMaterial
+		{  75 }, // uAmbient
+		{  81 }, // uFogParams
+		{  82 }, // uViewPos
+		{  83 }, // uLightPos
+		{  87 }, // uLightColor
+		{  91 }, // uRoomSize
+		{  92 }, // uPosScale
+		{  98 }, // uContacts
+	};
+
 	struct Shader {
 
+		D3D12_SHADER_BYTECODE vs = { };
+		D3D12_SHADER_BYTECODE ps = { };
+
+		vec4* cbMem = nullptr;
+		ID3D12Resource* constantBuffer = nullptr;
+
 		void init(Core::Pass pass, int type, int* def, int defCount) {
+
+			bool underwater = false;
+			bool alphatest = false;
+
+			for (int i = 0; i < defCount; i++) {
+				switch (def[i]) {
+				case SD_UNDERWATER: underwater = true; break;
+				case SD_ALPHA_TEST: alphatest = true; break;
+				}
+			}
+
+#define SHADER(S,P)    (P##Src = S##_##P, P##Size = sizeof(S##_##P))
+#define SHADER_A(S,P)  (alphatest  ? SHADER(S##_a,P) : SHADER(S,P))
+#define SHADER_U(S,P)  (underwater ? SHADER(S##_u,P) : SHADER(S,P))
+#define SHADER_AU(S,P) ((underwater && alphatest) ? SHADER(S##_au,P) : (alphatest ? SHADER(S##_a,P) : SHADER_U(S,P)))
+
+			int vSize = 0, fSize = 0;
+			const uint8 *vSrc = nullptr, *fSrc = nullptr;
+			switch (pass) {
+			case passCompose:
+				switch (type) {
+				case 0: SHADER_U(compose_sprite, v);  SHADER_AU(compose_sprite, f); break;
+				case 1: SHADER(compose_flash, v);  SHADER(compose_flash, f); break;
+				case 2: SHADER_U(compose_room, v);  SHADER_AU(compose_room, f); break;
+				case 3: SHADER_U(compose_entity, v);  SHADER_AU(compose_entity, f); break;
+				case 4: SHADER(compose_mirror, v);  SHADER(compose_mirror, f); break;
+				default: ASSERT(false);
+				}
+				break;
+			case passShadow:
+				switch (type) {
+				case 3:
+				case 4: SHADER(shadow_entity, v);  SHADER(shadow_entity, f); break;
+				default: ASSERT(false);
+				}
+				break;
+			case passAmbient:
+				switch (type) {
+				case 0: SHADER(ambient_sprite, v);  SHADER_A(ambient_sprite, f); break;
+				case 1: SHADER(ambient_room, v);  SHADER(ambient_room, f); break; // TYPE_FLASH (sky)
+				case 2: SHADER(ambient_room, v);  SHADER_A(ambient_room, f); break;
+				default: ASSERT(false);
+				}
+				break;
+			case passSky:
+				switch (type) {
+				case 0: SHADER(sky, v);     SHADER(sky, f);    break;
+				case 1: SHADER(sky_clouds, v);  SHADER(sky_clouds, f); break;
+				case 2: SHADER(sky_azure, v);   SHADER(sky_azure, f);  break;
+				default: ASSERT(false);
+				}
+				break;
+			case passWater:
+				switch (type) {
+				case 0: SHADER(water_drop, v);  SHADER(water_drop, f); break;
+				case 1: SHADER(water_simulate, v);  SHADER(water_simulate, f); break;
+				case 2: SHADER(water_caustics, v);  SHADER(water_caustics, f); break;
+				case 3: SHADER(water_rays, v);  SHADER(water_rays, f); break;
+				case 4: SHADER(water_mask, v);  SHADER(water_mask, f); break;
+				case 5: SHADER(water_compose, v);  SHADER(water_compose, f); break;
+				default: ASSERT(false);
+				}
+				break;
+			case passFilter:
+				switch (type) {
+				case 0: SHADER(filter_upscale, v);  SHADER(filter_upscale, f); break;
+				case 1: SHADER(filter_downsample, v);  SHADER(filter_downsample, f); break;
+				case 3: SHADER(filter_grayscale, v);  SHADER(filter_grayscale, f); break;
+				case 4: SHADER(filter_blur, v);  SHADER(filter_blur, f); break;
+				case 5: SHADER(filter_anaglyph, v);  SHADER(filter_anaglyph, f); break;
+				default: ASSERT(false);
+				}
+				break;
+			case passGUI: SHADER(gui, v);  SHADER(gui, f); break;
+			default: ASSERT(false); LOG("! wrong pass id\n"); return;
+			}
+
+#undef SHADER_A
+#undef SHADER_U
+#undef SHADER_AU
+
+			vs.pShaderBytecode = vSrc;
+			vs.BytecodeLength = vSize;
+			ps.pShaderBytecode = vSrc;
+			ps.BytecodeLength = vSize;
+
+			D3D12_HEAP_PROPERTIES heap = {};
+			heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+			D3D12_RESOURCE_DESC desc = { };
+			desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			desc.Width = sizeof(vec4) * (98 + MAX_CONTACTS);
+			desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			desc.Height = 1;
+			desc.DepthOrArraySize = 1;
+			desc.MipLevels = 1;
+			desc.SampleDesc.Count = 1;
+			osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer));
+			constantBuffer->Map(0, nullptr, (void**)&cbMem);
 		}
 
 		void deinit() {
+			if (constantBuffer)
+			{
+				constantBuffer->Unmap(0, nullptr);
+				constantBuffer->Release();
+				constantBuffer = nullptr;
+				cbMem = nullptr;
+			}
 		}
 
 		void bind() {
@@ -221,6 +356,7 @@ namespace GAPI {
 		}
 
 		void setParam(UniformType uType, float* value, int count) {
+			memcpy(cbMem + bindings[uType].reg, value, count * sizeof(vec4));
 		}
 
 		void setParam(UniformType uType, const vec4& value, int count = 1) {
@@ -297,7 +433,6 @@ namespace GAPI {
 		descHeap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 		osDevice->CreateDescriptorHeap(&descHeap, IID_PPV_ARGS(&dsvHeap));
 
-		
 		osSwapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffers[0]));
 		osSwapChain->GetBuffer(1, IID_PPV_ARGS(&backbuffers[1]));
 		rtvHandle[0] = rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -325,6 +460,18 @@ namespace GAPI {
 		osDevice->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clearValue, IID_PPV_ARGS(&depthBuffer));
 
 		osDevice->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
+
+		{
+			D3D12_ROOT_SIGNATURE_DESC rsDesc = { };
+			D3D12_ROOT_PARAMETER params[2] = {};
+			params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+			params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+			params[0].Descriptor.RegisterSpace = 0;
+			params[0].Descriptor.ShaderRegister = 0;
+			
+			rsDesc.NumParameters = _countof(params);
+			rsDesc.pParameters = params;
+		}
 	}
 
 	void deinit() {
